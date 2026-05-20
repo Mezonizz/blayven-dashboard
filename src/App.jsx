@@ -1,5 +1,14 @@
-import React from "react";
-import { Users, Mic, Coins, ShieldAlert, CalendarDays, ShoppingCart, TrendingUp, Clock } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import {
+  Users,
+  Mic,
+  Coins,
+  ShieldAlert,
+  CalendarDays,
+  ShoppingCart,
+  TrendingUp,
+  Clock,
+} from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 const Card = ({ children, className = "" }) => (
@@ -37,6 +46,78 @@ const requests = [
 ];
 
 export default function BlayvenDashboardMockup() {
+  const [profiles, setProfiles] = useState([]);
+const [statsLive, setStatsLive] = useState({
+  members: 0,
+  totalAp: 0,
+  voiceHours: 0,
+  activePunishments: 0,
+});
+
+const stats = [
+  { title: "Участников", value: statsLive.members, icon: Users, note: "в базе members" },
+  { title: "AP выдано", value: statsLive.totalAp, icon: Coins, note: "total earned" },
+  { title: "Voice часов", value: `${statsLive.voiceHours}ч`, icon: Mic, note: "всего" },
+  { title: "Активных наказаний", value: statsLive.activePunishments, icon: ShieldAlert, note: "status ACTIVE" },
+];
+useEffect(() => {
+  async function loadStats() {
+    const { count: membersCount } = await supabase
+      .from("members")
+      .select("*", { count: "exact", head: true });
+
+    const { data: apRows } = await supabase
+      .from("loyalty_profiles")
+      .select("total_earned");
+
+    const { data: voiceRows } = await supabase
+      .from("voice_sessions")
+      .select("duration_seconds")
+      .eq("is_afk", false);
+
+    const { count: punishmentsCount } = await supabase
+      .from("punishments")
+      .select("*", { count: "exact", head: true })
+      .eq("status", "ACTIVE");
+
+    const totalAp = (apRows || []).reduce(
+      (sum, r) => sum + Number(r.total_earned || 0),
+      0
+    );
+
+    const totalVoiceSeconds = (voiceRows || []).reduce(
+      (sum, r) => sum + Number(r.duration_seconds || 0),
+      0
+    );
+
+    setStatsLive({
+      members: membersCount || 0,
+      totalAp,
+      voiceHours: Math.floor(totalVoiceSeconds / 3600),
+      activePunishments: punishmentsCount || 0,
+    });
+  }
+
+  loadStats();
+}, []);
+useEffect(() => {
+  async function loadProfiles() {
+    const { data, error } = await supabase
+      .from("loyalty_profiles")
+      .select("*")
+      .order("points", { ascending: false })
+      .limit(10);
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    setProfiles(data || []);
+  }
+
+  loadProfiles();
+}, []);
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6">
       <div className="max-w-7xl mx-auto grid grid-cols-12 gap-6">
@@ -120,15 +201,17 @@ export default function BlayvenDashboardMockup() {
                     </thead>
                     <tbody>
                       {members.map((m) => (
-                        <tr key={m.name} className="border-t border-slate-800 hover:bg-slate-800/40">
-                          <td className="p-3 font-medium">{m.name}</td>
-                          <td className="p-3 text-slate-300">{m.rank}</td>
-                          <td className="p-3">{m.ap}</td>
-                          <td className="p-3">{m.voice}</td>
-                          <td className="p-3">
-                            <span className="px-2 py-1 rounded-lg bg-slate-800 text-xs">{m.status}</span>
-                          </td>
-                        </tr>
+                       <tr key={m.user_id} className="border-t border-slate-800 hover:bg-slate-800/40">
+  <td className="p-3 font-medium">{m.user_id}</td>
+  <td className="p-3 text-slate-300">LIVE</td>
+  <td className="p-3">{m.points}</td>
+  <td className="p-3">{m.total_voice_hours || 0}ч</td>
+  <td className="p-3">
+    <span className="px-2 py-1 rounded-lg bg-slate-800 text-xs">
+      ACTIVE
+    </span>
+  </td>
+</tr>
                       ))}
                     </tbody>
                   </table>
