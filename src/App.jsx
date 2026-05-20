@@ -8,6 +8,7 @@ import {
   ShoppingCart,
   TrendingUp,
   Clock,
+  Search,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
@@ -54,12 +55,34 @@ const [statsLive, setStatsLive] = useState({
   activePunishments: 0,
 });
 
+const [searchQuery, setSearchQuery] = useState("");
+const [profileStatusFilter, setProfileStatusFilter] = useState("ALL");
+
 const stats = [
   { title: "Участников", value: statsLive.members, icon: Users, note: "в базе members" },
   { title: "AP выдано", value: statsLive.totalAp, icon: Coins, note: "total earned" },
   { title: "Voice часов", value: `${statsLive.voiceHours}ч`, icon: Mic, note: "всего" },
   { title: "Активных наказаний", value: statsLive.activePunishments, icon: ShieldAlert, note: "status ACTIVE" },
 ];
+
+const filteredProfiles = profiles
+  .filter((m) => {
+    const q = searchQuery.toLowerCase().trim();
+
+    const matchesSearch =
+      !q ||
+      String(m.name || "").toLowerCase().includes(q) ||
+      String(m.username || "").toLowerCase().includes(q) ||
+      String(m.static_id || "").toLowerCase().includes(q);
+
+    const matchesStatus =
+      profileStatusFilter === "ALL" ||
+      m.status === profileStatusFilter;
+
+    return matchesSearch && matchesStatus;
+  })
+  .slice(0, 20);
+
 useEffect(() => {
   async function loadStats() {
     const { count: membersCount } = await supabase
@@ -211,11 +234,42 @@ useEffect(() => {
           <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
             <Card className="xl:col-span-2 bg-slate-900/80 border-slate-800 rounded-2xl shadow-xl">
               <CardContent className="p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-bold">Топ участников</h2>
-                  <span className="text-sm text-slate-400">По AP и voice активности</span>
-                </div>
+  <div className="flex flex-col gap-4 mb-4">
+    <div className="flex items-center justify-between">
+      <div>
+        <h2 className="text-xl font-bold">Состав семьи</h2>
+        <p className="text-sm text-slate-400">
+          Показано {filteredProfiles.length} из {profiles.length}
+        </p>
+      </div>
 
+      <span className="text-sm text-slate-400">
+        Live данные из Supabase
+      </span>
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="md:col-span-2 flex items-center gap-2 bg-slate-800/70 border border-slate-700 rounded-xl px-3 py-2">
+        <Search className="w-4 h-4 text-slate-400" />
+        <input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Поиск по имени, username или static..."
+          className="w-full bg-transparent outline-none text-sm text-slate-100 placeholder:text-slate-500"
+        />
+      </div>
+
+      <select
+        value={profileStatusFilter}
+        onChange={(e) => setProfileStatusFilter(e.target.value)}
+        className="bg-slate-800/70 border border-slate-700 rounded-xl px-3 py-2 text-sm outline-none"
+      >
+        <option value="ALL">Все профили</option>
+        <option value="Активен">Есть AP профиль</option>
+        <option value="Нет AP профиля">Нет AP профиля</option>
+      </select>
+    </div>
+  </div>
                 <div className="overflow-hidden rounded-xl border border-slate-800">
                   <table className="w-full text-sm">
                     <thead className="bg-slate-800 text-slate-300">
@@ -228,7 +282,7 @@ useEffect(() => {
                       </tr>
                     </thead>
                     <tbody>
-                      {profiles.map((m) => (
+                      {filteredProfiles.map((m) => (
   <tr key={m.id} className="border-t border-slate-800 hover:bg-slate-800/40">
     <td className="p-3 font-medium">{m.name}</td>
     <td className="p-3 text-slate-300">{m.rank}</td>
@@ -241,6 +295,13 @@ useEffect(() => {
     </td>
   </tr>
 ))}
+{filteredProfiles.length === 0 && (
+  <tr>
+    <td colSpan="5" className="p-6 text-center text-slate-400">
+      Ничего не найдено по выбранным фильтрам.
+    </td>
+  </tr>
+)}
                     </tbody>
                   </table>
                 </div>
