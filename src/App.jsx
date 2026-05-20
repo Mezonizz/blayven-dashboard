@@ -101,22 +101,50 @@ useEffect(() => {
   loadStats();
 }, []);
 useEffect(() => {
-  async function loadProfiles() {
-    const { data, error } = await supabase
-      .from("loyalty_profiles")
-      .select("*")
-      .order("points", { ascending: false })
-      .limit(10);
+  async function loadDashboard() {
+    const { data: membersData, error: membersError } = await supabase
+      .from("members")
+      .select("id, username, display_name, rank, static_id")
+      .order("rank", { ascending: false });
 
-    if (error) {
-      console.error(error);
+    if (membersError) {
+      console.error("members error:", membersError);
       return;
     }
 
-    setProfiles(data || []);
+    const { data: profilesData, error: profilesError } = await supabase
+      .from("loyalty_profiles")
+      .select("user_id, points, total_earned, total_spent");
+
+    if (profilesError) {
+      console.error("profiles error:", profilesError);
+      return;
+    }
+
+    const profilesMap = new Map(
+      (profilesData || []).map((p) => [String(p.user_id), p])
+    );
+
+    const merged = (membersData || []).map((m) => {
+      const profile = profilesMap.get(String(m.id));
+
+      return {
+        id: m.id,
+        name: m.display_name || m.username || m.id,
+        username: m.username || "—",
+        rank: m.rank || "—",
+        static_id: m.static_id || "—",
+        ap: profile?.points || 0,
+        total_earned: profile?.total_earned || 0,
+        total_spent: profile?.total_spent || 0,
+        status: profile ? "Активен" : "Нет AP профиля",
+      };
+    });
+
+    setProfiles(merged);
   }
 
-  loadProfiles();
+  loadDashboard();
 }, []);
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6">
@@ -195,24 +223,24 @@ useEffect(() => {
                         <th className="text-left p-3">Игрок</th>
                         <th className="text-left p-3">Ранг</th>
                         <th className="text-left p-3">AP</th>
-                        <th className="text-left p-3">Voice</th>
+                        <th className="text-left p-3">Static</th>
                         <th className="text-left p-3">Статус</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {members.map((m) => (
-                       <tr key={m.user_id} className="border-t border-slate-800 hover:bg-slate-800/40">
-  <td className="p-3 font-medium">{m.user_id}</td>
-  <td className="p-3 text-slate-300">LIVE</td>
-  <td className="p-3">{m.points}</td>
-  <td className="p-3">{m.total_voice_hours || 0}ч</td>
-  <td className="p-3">
-    <span className="px-2 py-1 rounded-lg bg-slate-800 text-xs">
-      ACTIVE
-    </span>
-  </td>
-</tr>
-                      ))}
+                      {profiles.map((m) => (
+  <tr key={m.id} className="border-t border-slate-800 hover:bg-slate-800/40">
+    <td className="p-3 font-medium">{m.name}</td>
+    <td className="p-3 text-slate-300">{m.rank}</td>
+    <td className="p-3">{m.ap}</td>
+    <td className="p-3">#{m.static_id}</td>
+    <td className="p-3">
+      <span className="px-2 py-1 rounded-lg bg-slate-800 text-xs">
+        {m.status}
+      </span>
+    </td>
+  </tr>
+))}
                     </tbody>
                   </table>
                 </div>
