@@ -48,15 +48,22 @@ const requests = [
 
 export default function BlayvenDashboardMockup() {
   const [profiles, setProfiles] = useState([]);
+  const [requestsLive, setRequestsLive] = useState([]);
 const [statsLive, setStatsLive] = useState({
   members: 0,
   totalAp: 0,
   voiceHours: 0,
   activePunishments: 0,
 });
+const [extraStats, setExtraStats] = useState({
+  voiceTodayHours: 0,
+  contractsMonth: 0,
+  vacationsActive: 0,
+});
 
 const [searchQuery, setSearchQuery] = useState("");
 const [profileStatusFilter, setProfileStatusFilter] = useState("ALL");
+const [activePage, setActivePage] = useState("Главная");
 
 const stats = [
   { title: "Участников", value: statsLive.members, icon: Users, note: "в базе members" },
@@ -112,7 +119,39 @@ useEffect(() => {
       (sum, r) => sum + Number(r.duration_seconds || 0),
       0
     );
+const todayStart = new Date();
+todayStart.setHours(0, 0, 0, 0);
 
+const monthStart = new Date();
+monthStart.setDate(1);
+monthStart.setHours(0, 0, 0, 0);
+
+const { data: voiceTodayRows } = await supabase
+  .from("voice_sessions")
+  .select("duration_seconds")
+  .eq("is_afk", false)
+  .gte("started_at", todayStart.toISOString());
+
+const { count: contractsMonthCount } = await supabase
+  .from("contracts")
+  .select("*", { count: "exact", head: true })
+  .gte("logged_at", monthStart.toISOString());
+
+const { count: vacationsActiveCount } = await supabase
+  .from("vacations")
+  .select("*", { count: "exact", head: true })
+  .in("status", ["ACTIVE", "PENDING", "APPROVED"]);
+
+const voiceTodaySeconds = (voiceTodayRows || []).reduce(
+  (sum, r) => sum + Number(r.duration_seconds || 0),
+  0
+);
+
+setExtraStats({
+  voiceTodayHours: Math.floor(voiceTodaySeconds / 3600),
+  contractsMonth: contractsMonthCount || 0,
+  vacationsActive: vacationsActiveCount || 0,
+});
     setStatsLive({
       members: membersCount || 0,
       totalAp,
@@ -138,6 +177,35 @@ useEffect(() => {
     const { data: profilesData, error: profilesError } = await supabase
       .from("loyalty_profiles")
       .select("user_id, points, total_earned, total_spent");
+
+      const { data: promotionsData } = await supabase
+  .from("promotion_requests")
+  .select("id, user_tag, desired_rank, status, created_at")
+  .eq("status", "ACTIVE")
+  .order("created_at", { ascending: false })
+  .limit(5);
+
+const { data: vacationsData } = await supabase
+  .from("vacations")
+  .select("id, user_tag, status, end_at, requested_at")
+  .eq("status", "PENDING")
+  .order("requested_at", { ascending: false })
+  .limit(5);
+
+const { data: purchasesData } = await supabase
+  .from("loyalty_purchases")
+  .select("id, user_tag, item_name, price, status, created_at")
+  .eq("status", "PENDING")
+  .order("created_at", { ascending: false })
+  .limit(5);
+
+const { data: apRequestsData } = await supabase
+  .from("loyalty_ap_requests")
+  .select("id, requester_tag, target_tag, amount, reason, status, created_at")
+  .eq("status", "PENDING")
+  .order("created_at", { ascending: false })
+  .limit(5);
+
 
     if (profilesError) {
       console.error("profiles error:", profilesError);
@@ -165,8 +233,37 @@ useEffect(() => {
     });
 
     setProfiles(merged);
+
+    const combinedRequests = [
+  ...(promotionsData || []).map((r) => ({
+    type: "Повышение",
+    user: r.user_tag || "Unknown",
+    text: `Желаемый ранг: ${r.desired_rank || "—"}`,
+  })),
+
+  ...(vacationsData || []).map((r) => ({
+    type: "Отпуск",
+    user: r.user_tag || "Unknown",
+    text: "Ожидает рассмотрения",
+  })),
+
+  ...(purchasesData || []).map((r) => ({
+    type: "Магазин AP",
+    user: r.user_tag || "Unknown",
+    text: `${r.item_name || "Покупка"} — ${r.price || 0} AP`,
+  })),
+
+  ...(apRequestsData || []).map((r) => ({
+    type: "Выдача AP",
+    user: r.requester_tag || "Unknown",
+    text: `${r.target_tag || "Unknown"} +${r.amount || 0} AP`,
+  })),
+].slice(0, 8);
+
+setRequestsLive(combinedRequests);
   }
 
+  
   loadDashboard();
 }, []);
   return (
@@ -181,20 +278,28 @@ useEffect(() => {
               </div>
 
               <nav className="space-y-2 text-sm">
-                {[
-                  [TrendingUp, "Главная"],
-                  [Users, "Состав"],
-                  [Coins, "AP система"],
-                  [Mic, "Voice активность"],
-                  [ShieldAlert, "Наказания"],
-                  [CalendarDays, "Отпуска"],
-                  [ShoppingCart, "AP магазин"],
-                ].map(([Icon, label]) => (
-                  <div key={label} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-slate-800 cursor-pointer">
-                    <Icon className="w-4 h-4" />
-                    <span>{label}</span>
-                  </div>
-                ))}
+               {[
+  [TrendingUp, "Главная"],
+  [Users, "Состав"],
+  [Coins, "AP система"],
+  [Mic, "Voice активность"],
+  [ShieldAlert, "Наказания"],
+  [CalendarDays, "Отпуска"],
+  [ShoppingCart, "AP магазин"],
+].map(([Icon, label]) => (
+  <div
+    key={label}
+    onClick={() => setActivePage(label)}
+    className={`flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition-all ${
+      activePage === label
+        ? "bg-cyan-500/15 text-cyan-300 border border-cyan-400/30 shadow-[0_0_18px_rgba(34,211,238,0.15)]"
+        : "text-slate-300 hover:bg-slate-800 hover:text-white"
+    }`}
+  >
+    <Icon className="w-4 h-4" />
+    <span>{label}</span>
+  </div>
+))}
               </nav>
             </CardContent>
           </Card>
@@ -312,7 +417,7 @@ useEffect(() => {
               <CardContent className="p-5">
                 <h2 className="text-xl font-bold mb-4">Ожидают действий</h2>
                 <div className="space-y-3">
-                  {requests.map((r) => (
+                  {requestsLive.map((r) => (
                     <div key={`${r.type}-${r.user}`} className="p-4 rounded-xl bg-slate-800/70 border border-slate-700">
                       <div className="flex items-center justify-between">
                         <div className="font-semibold">{r.type}</div>
@@ -322,6 +427,11 @@ useEffect(() => {
                       <Button size="sm" className="mt-3 rounded-xl w-full">Открыть</Button>
                     </div>
                   ))}
+                  {requestsLive.length === 0 && (
+  <div className="p-4 rounded-xl bg-slate-800/70 border border-slate-700 text-slate-400 text-sm">
+    Сейчас нет активных заявок.
+  </div>
+)}
                 </div>
               </CardContent>
             </Card>
@@ -331,21 +441,27 @@ useEffect(() => {
             <Card className="bg-slate-900/80 border-slate-800 rounded-2xl">
               <CardContent className="p-5">
                 <h3 className="font-bold mb-2">Voice сегодня</h3>
-                <p className="text-4xl font-bold">214ч</p>
+                <p className="text-4xl font-bold">
+                  {extraStats.voiceTodayHours}ч
+                </p>
                 <p className="text-sm text-slate-400 mt-2">Самый активный час: 21:00</p>
               </CardContent>
             </Card>
             <Card className="bg-slate-900/80 border-slate-800 rounded-2xl">
               <CardContent className="p-5">
                 <h3 className="font-bold mb-2">Контракты</h3>
-                <p className="text-4xl font-bold">342</p>
+                <p className="text-4xl font-bold">
+                  {extraStats.contractsMonth}
+                </p>
                 <p className="text-sm text-slate-400 mt-2">За текущий месяц</p>
               </CardContent>
             </Card>
             <Card className="bg-slate-900/80 border-slate-800 rounded-2xl">
               <CardContent className="p-5">
                 <h3 className="font-bold mb-2">Отпуска</h3>
-                <p className="text-4xl font-bold">5</p>
+                <p className="text-4xl font-bold">
+                  {extraStats.vacationsActive}
+                </p>
                 <p className="text-sm text-slate-400 mt-2">Активных заявок: 2</p>
               </CardContent>
             </Card>
