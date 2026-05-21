@@ -12,6 +12,14 @@ import {
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
+const ALLOWED_GUILD_ID = "1400389862464426084";
+
+const ALLOWED_DASHBOARD_ROLES = [
+  "1400390306427441165", // CC / СС
+  "1400390289339842610", // Recruiter / Рекрутер
+  "1400390286164758599", // Leader
+  "1400390287041499288", // Deputy 
+];
 
 const Card = ({ children, className = "" }) => (
   <div className={className}>{children}</div>
@@ -48,8 +56,12 @@ const requests = [
 ];
 
 export default function BlayvenDashboardMockup() {
-  const [profiles, setProfiles] = useState([]);
-  const [requestsLive, setRequestsLive] = useState([]);
+const [profiles, setProfiles] = useState([]);
+const [session, setSession] = useState(null);
+const [discordUser, setDiscordUser] = useState(null);
+const [authLoading, setAuthLoading] = useState(true);
+const [hasAccess, setHasAccess] = useState(false);
+const [requestsLive, setRequestsLive] = useState([]);
 const [statsLive, setStatsLive] = useState({
   members: 0,
   totalAp: 0,
@@ -490,6 +502,129 @@ useEffect(() => {
   loadPunishmentsPage();
 }, []);
 
+async function loginWithDiscord() {
+  await supabase.auth.signInWithOAuth({
+    provider: "discord",
+    options: {
+      scopes: "identify email guilds guilds.members.read",
+      redirectTo: window.location.origin,
+    },
+  });
+}
+
+async function logout() {
+  await supabase.auth.signOut();
+  setSession(null);
+  setDiscordUser(null);
+  setHasAccess(false);
+}
+
+useEffect(() => {
+  async function checkAuth() {
+    setAuthLoading(true);
+
+    const { data } = await supabase.auth.getSession();
+    const currentSession = data.session;
+
+    setSession(currentSession);
+
+    if (!currentSession?.provider_token) {
+      setHasAccess(false);
+      setAuthLoading(false);
+      return;
+    }
+
+    const userRes = await fetch("https://discord.com/api/users/@me", {
+      headers: {
+        Authorization: `Bearer ${currentSession.provider_token}`,
+      },
+    });
+
+    const userData = await userRes.json();
+    setDiscordUser(userData);
+
+    const memberRes = await fetch(
+      `https://discord.com/api/users/@me/guilds/${ALLOWED_GUILD_ID}/member`,
+      {
+        headers: {
+          Authorization: `Bearer ${currentSession.provider_token}`,
+        },
+      }
+    );
+
+    if (!memberRes.ok) {
+      setHasAccess(false);
+      setAuthLoading(false);
+      return;
+    }
+
+    const memberData = await memberRes.json();
+
+    const allowed = (memberData.roles || []).some((roleId) =>
+      ALLOWED_DASHBOARD_ROLES.includes(roleId)
+    );
+
+    setHasAccess(allowed);
+    setAuthLoading(false);
+  }
+
+  checkAuth();
+
+  const { data: listener } = supabase.auth.onAuthStateChange(() => {
+    checkAuth();
+  });
+
+  return () => {
+    listener.subscription.unsubscribe();
+  };
+}, []);
+
+if (authLoading) {
+  return (
+    <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+      Проверка доступа...
+    </div>
+  );
+}
+
+if (!session) {
+  return (
+    <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+      <div className="bg-slate-900 p-8 rounded-2xl border border-slate-800 text-center">
+        <h1 className="text-3xl font-bold mb-3">BLAYVEN Dashboard</h1>
+        <p className="text-slate-400 mb-6">Вход только через Discord</p>
+
+        <button
+          onClick={loginWithDiscord}
+          className="px-6 py-3 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/30"
+        >
+          Войти через Discord
+        </button>
+      </div>
+    </div>
+  );
+}
+
+if (!hasAccess) {
+  return (
+    <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+      <div className="bg-slate-900 p-8 rounded-2xl border border-rose-500/30 text-center">
+        <h1 className="text-3xl font-bold mb-3 text-rose-300">Доступ запрещён</h1>
+        <p className="text-slate-400 mb-6">
+          У тебя нет нужной роли для входа в BLAYVEN Dashboard.
+        </p>
+
+        <button
+          onClick={logout}
+          className="px-6 py-3 rounded-xl bg-slate-800 hover:bg-slate-700"
+        >
+          Выйти
+        </button>
+      </div>
+    </div>
+  );
+}
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6">
       <div className="max-w-7xl mx-auto grid grid-cols-12 gap-6">
@@ -530,16 +665,31 @@ useEffect(() => {
         </aside>
         <main className="col-span-12 lg:col-span-9 xl:col-span-10 space-y-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold">Панель управления семьёй</h1>
-              <p className="text-slate-400 mt-1">Контроль состава, активности, AP, наказаний и заявок.</p>
-            </div>
-            <div className="flex gap-3">
-              <Button className="rounded-xl">Обновить данные</Button>
-              <Button variant="secondary" className="rounded-xl">Экспорт отчёта</Button>
-            </div>
-          </div>
+  <div>
+    <h1 className="text-3xl font-bold">Панель управления семьёй</h1>
+    <p className="text-slate-400 mt-1">
+      Контроль состава, активности, AP, наказаний и заявок.
+    </p>
+  </div>
 
+  <div className="flex gap-3 items-center">
+    {discordUser && (
+      <div className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-700 text-slate-300">
+        {discordUser.global_name || discordUser.username}
+      </div>
+    )}
+
+    <Button className="rounded-xl">Обновить данные</Button>
+    <Button variant="secondary" className="rounded-xl">Экспорт отчёта</Button>
+
+    <button
+      onClick={logout}
+      className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white"
+    >
+      Выйти
+    </button>
+  </div>
+</div>
           
             {activePage === "Главная" && (
             <>
