@@ -716,19 +716,37 @@ useEffect(() => {
       }
     );
 
-    if (!memberRes.ok) {
-      setHasAccess(false);
-      setAuthLoading(false);
-      return;
-    }
+if (!memberRes.ok) {
+  console.error("Discord member fetch failed:", memberRes.status);
+
+  // 429 = Discord rate limit, НЕ сбрасываем доступ
+  if (memberRes.status === 429) {
+    setAuthLoading(false);
+    return;
+  }
+
+  setHasAccess(false);
+  setAuthLoading(false);
+  return;
+}
 
     const memberData = await memberRes.json();
 
     setDiscordRoles(memberData.roles || []);
 
-    const allowed = (memberData.roles || []).some((roleId) =>
-      ALLOWED_DASHBOARD_ROLES.includes(roleId)
-    );
+    console.log("DISCORD MEMBER STATUS:", memberRes.status);
+console.log("DISCORD MEMBER DATA:", memberData);
+console.log("DISCORD MEMBER ROLES:", memberData.roles);
+console.log("ALLOWED DASHBOARD ROLES:", ALLOWED_DASHBOARD_ROLES);
+
+const memberRoles = (memberData.roles || []).map(String);
+const allowedRoles = ALLOWED_DASHBOARD_ROLES.map(String);
+
+const allowed = memberRoles.some((roleId) =>
+  allowedRoles.includes(roleId)
+);
+
+console.log("ACCESS ALLOWED:", allowed);
 
     setHasAccess(allowed);
     setAuthLoading(false);
@@ -1650,10 +1668,10 @@ function getShopCategoryLabel(category) {
   </div>
 
 {canRequestAp && (
-  <div className="mt-6 rounded-2xl bg-slate-800/70 border border-slate-700 p-5">
+  <div className="mt-6 rounded-2xl bg-slate-800/70 border border-slate-700 p-5 xl:col-span-4">
     <h3 className="text-xl font-bold mb-4">Создать AP-запрос</h3>
 
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
       <select
         value={apRequestTargetId}
         onChange={(e) => setApRequestTargetId(e.target.value)}
