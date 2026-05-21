@@ -229,6 +229,7 @@ useEffect(() => {
     const { data: apRequestsRows } = await supabase
   .from("loyalty_ap_requests")
   .select("*")
+  .eq("status", "PENDING")
   .order("created_at", { ascending: false })
   .limit(20);
 
@@ -293,6 +294,7 @@ setApStats({
 const { data: apRequestsRows2 } = await supabase
   .from("loyalty_ap_requests")
   .select("*")
+  .eq("status", "PENDING")
   .order("created_at", { ascending: false })
   .limit(20);
 
@@ -601,6 +603,7 @@ useEffect(() => {
         const { data } = await supabase
           .from("loyalty_ap_requests")
           .select("*")
+          .eq("status", "PENDING")
           .order("created_at", { ascending: false })
           .limit(20);
 
@@ -734,11 +737,6 @@ if (!memberRes.ok) {
 
     setDiscordRoles(memberData.roles || []);
 
-    console.log("DISCORD MEMBER STATUS:", memberRes.status);
-console.log("DISCORD MEMBER DATA:", memberData);
-console.log("DISCORD MEMBER ROLES:", memberData.roles);
-console.log("ALLOWED DASHBOARD ROLES:", ALLOWED_DASHBOARD_ROLES);
-
 const memberRoles = (memberData.roles || []).map(String);
 const allowedRoles = ALLOWED_DASHBOARD_ROLES.map(String);
 
@@ -862,6 +860,7 @@ async function createApRequestFromDashboard() {
 const { data: refreshedApRequests } = await supabase
   .from("loyalty_ap_requests")
   .select("*")
+  .eq("status", "PENDING")
   .order("created_at", { ascending: false })
   .limit(20);
 
@@ -901,6 +900,9 @@ async function approveApRequest(requestId) {
   if (error) {
     console.error("approve AP request error:", error);
     alert("Ошибка approve.");
+    setApRequests((prev) =>
+  prev.filter((r) => r.id !== requestId)
+);
     setProcessingApRequestId(null);
     return;
   }
@@ -940,6 +942,9 @@ async function rejectApRequest(requestId) {
   if (error) {
     console.error("reject AP request error:", error);
     alert("Ошибка reject.");
+    setApRequests((prev) =>
+    prev.filter((r) => r.id !== requestId)
+    );
     setProcessingApRequestId(null);
     return;
   }
@@ -1300,14 +1305,24 @@ function getShopCategoryLabel(category) {
               <CardContent className="p-5">
                 <h2 className="text-xl font-bold mb-4">Ожидают действий</h2>
                 <div className="space-y-3">
-                  {requestsLive.map((r) => (
-                    <div key={`${r.type}-${r.user}`} className="p-4 rounded-xl bg-slate-800/70 border border-slate-700">
+{requestsLive.map((r) => (
+  <div
+    key={`${r.type}-${r.user}`}
+    onClick={() => {
+      if (r.type === "Выдача AP") setActivePage("AP система");
+      if (r.type === "Отпуск") setActivePage("Отпуска");
+      if (r.type === "Повышение") setActivePage("Состав");
+      if (r.type === "Магазин AP") setActivePage("AP магазин");
+    }}
+    className="p-4 rounded-xl bg-slate-800/70 border border-slate-700 cursor-pointer hover:bg-slate-800 transition">
                       <div className="flex items-center justify-between">
                         <div className="font-semibold">{r.type}</div>
                         <Clock className="w-4 h-4 text-slate-400" />
                       </div>
                       <div className="text-sm text-slate-400 mt-1">{r.user} — {r.text}</div>
-                      <Button size="sm" className="mt-3 rounded-xl w-full">Открыть</Button>
+                      <Button size="sm" className="mt-3 rounded-xl w-full">
+  Открыть
+</Button>
                     </div>
                   ))}
                   {requestsLive.length === 0 && (
@@ -1731,7 +1746,9 @@ function getShopCategoryLabel(category) {
     </thead>
 
     <tbody>
-      {apRequests.map((r) => (
+      {apRequests
+      .filter((r) => r.status === "PENDING")
+      .map((r) => (
         <tr
           key={r.id}
           className="border-t border-slate-800"
