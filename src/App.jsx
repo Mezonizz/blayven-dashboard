@@ -68,6 +68,17 @@ const [session, setSession] = useState(null);
 const [discordUser, setDiscordUser] = useState(null);
 const [authLoading, setAuthLoading] = useState(true);
 const [apRequests, setApRequests] = useState([]);
+const [shopItems, setShopItems] = useState([]);
+const [showAddItemForm, setShowAddItemForm] = useState(false);
+const [newShopItemName, setNewShopItemName] = useState("");
+const [newShopItemDescription, setNewShopItemDescription] = useState("");
+const [newShopItemPrice, setNewShopItemPrice] = useState("");
+const [newShopItemCategory, setNewShopItemCategory] = useState("general");
+const [editingShopItemId, setEditingShopItemId] = useState(null);
+const [editShopItemName, setEditShopItemName] = useState("");
+const [editShopItemDescription, setEditShopItemDescription] = useState("");
+const [editShopItemPrice, setEditShopItemPrice] = useState("");
+const [editShopItemCategory, setEditShopItemCategory] = useState("general");
 const [processingApRequestId, setProcessingApRequestId] = useState(null);
 const [hasAccess, setHasAccess] = useState(false);
 const [requestsLive, setRequestsLive] = useState([]);
@@ -222,6 +233,13 @@ useEffect(() => {
   .limit(20);
 
 setApRequests(apRequestsRows || []);
+
+const { data: shopRows } = await supabase
+  .from("loyalty_shop_items")
+  .select("*")
+  .order("price", { ascending: true });
+
+setShopItems(shopRows || []);
 
 const { data: apRows } = await supabase
   .from("loyalty_profiles")
@@ -823,6 +841,20 @@ async function createApRequestFromDashboard() {
   setApRequestAmount("");
   setApRequestReason("");
 
+const { data: refreshedApRequests } = await supabase
+  .from("loyalty_ap_requests")
+  .select("*")
+  .order("created_at", { ascending: false })
+  .limit(20);
+
+setApRequests(refreshedApRequests || []);
+
+setApStats((prev) => ({
+  ...prev,
+  pendingRequests: prev.pendingRequests + 1,
+}));
+
+
   alert("AP-запрос создан. Leader/Deputy смогут его рассмотреть.");
 }
 
@@ -900,6 +932,148 @@ async function rejectApRequest(requestId) {
   }));
 
   setProcessingApRequestId(null);
+}
+
+async function addShopItem() {
+  if (!canReviewAp) return;
+
+  if (!newShopItemName.trim() || !newShopItemPrice) {
+    alert("Заполни название и цену товара.");
+    return;
+  }
+
+  const { error } = await supabase.from("loyalty_shop_items").insert({
+    name: newShopItemName.trim(),
+    description: newShopItemDescription.trim() || null,
+    price: Number(newShopItemPrice),
+    enabled: true,
+    category: newShopItemCategory,
+    sort_order: shopItems.length + 1,
+  });
+
+  if (error) {
+    console.error("add shop item error:", error);
+    alert("Ошибка при добавлении товара.");
+    return;
+  }
+
+  setNewShopItemName("");
+  setNewShopItemDescription("");
+  setNewShopItemPrice("");
+  setNewShopItemCategory("general");
+  setShowAddItemForm(false);
+
+  const { data } = await supabase
+    .from("loyalty_shop_items")
+    .select("*")
+    .order("price", { ascending: true });
+
+  setShopItems(data || []);
+}
+
+async function disableShopItem(itemId) {
+  if (!canReviewAp) return;
+
+  const { error } = await supabase
+    .from("loyalty_shop_items")
+    .update({ enabled: false })
+    .eq("id", itemId);
+
+  if (error) {
+    console.error("disable shop item error:", error);
+    alert("Ошибка при отключении товара.");
+    return;
+  }
+
+  setShopItems((prev) => prev.filter((item) => item.id !== itemId));
+}
+
+function startEditShopItem(item) {
+  if (!canReviewAp) return;
+
+  setEditingShopItemId(item.id);
+  setEditShopItemName(item.name || "");
+  setEditShopItemDescription(item.description || "");
+  setEditShopItemPrice(String(item.price || ""));
+  setEditShopItemCategory(item.category || "general");
+}
+
+async function saveEditShopItem() {
+  if (!canReviewAp || !editingShopItemId) return;
+
+  if (!editShopItemName.trim() || !editShopItemPrice) {
+    alert("Название и цена обязательны.");
+    return;
+  }
+
+  const { error } = await supabase
+    .from("loyalty_shop_items")
+    .update({
+      name: editShopItemName.trim(),
+      description: editShopItemDescription.trim() || null,
+      price: Number(editShopItemPrice),
+      category: editShopItemCategory,
+    })
+    .eq("id", editingShopItemId);
+
+  if (error) {
+    console.error("edit shop item error:", error);
+    alert("Ошибка при сохранении товара.");
+    return;
+  }
+
+  setShopItems((prev) =>
+    prev.map((item) =>
+      item.id === editingShopItemId
+        ? {
+            ...item,
+            name: editShopItemName.trim(),
+            description: editShopItemDescription.trim() || null,
+            price: Number(editShopItemPrice),
+            category: editShopItemCategory,
+          }
+        : item
+    )
+  );
+
+  setEditingShopItemId(null);
+  setEditShopItemName("");
+  setEditShopItemDescription("");
+  setEditShopItemPrice("");
+}
+
+function getShopCategoryLabel(category) {
+  switch (category) {
+    case "rank":
+      return "Ранги";
+
+    case "punishment":
+      return "Наказания";
+
+    case "vacation":
+      return "Отпуск";
+
+    case "priority":
+      return "Приоритет";
+
+    case "cosmetic":
+      return "Косметика";
+
+    case "bonus":
+      return "Бонусы";
+
+    case "protection":
+      return "Защита";
+
+    case "boost":
+      return "Бусты";
+
+    case "weekly":
+      return "Weekly Top";
+
+    default:
+      return "Разное";
+  }
 }
 
   return (
@@ -1615,37 +1789,6 @@ async function rejectApRequest(requestId) {
     </tbody>
   </table>
 </div>
-
-  <div className="space-y-3">
-    {apPendingRequests.map((r) => (
-      <div
-        key={r.id}
-        className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 rounded-xl bg-slate-800/70 border border-slate-700 p-4"
-      >
-        <div>
-          <div className="font-semibold">
-            {r.requester_tag || "Unknown"} → {r.target_tag || "Unknown"}
-          </div>
-          <div className="text-sm text-slate-400 mt-1">
-            {r.reason || "Без причины"}
-          </div>
-          <div className="text-xs text-slate-500 mt-1">
-            {new Date(r.created_at).toLocaleString()}
-          </div>
-        </div>
-
-        <div className="text-2xl font-bold text-cyan-300">
-          +{r.amount || 0} AP
-        </div>
-      </div>
-    ))}
-
-    {apPendingRequests.length === 0 && (
-      <div className="rounded-xl bg-slate-800/70 border border-slate-700 p-4 text-slate-400">
-        Сейчас нет pending заявок на AP.
-      </div>
-    )}
-  </div>
 </div>
     </CardContent>
   </Card>
@@ -1948,6 +2091,183 @@ async function rejectApRequest(requestId) {
       </div>
     </CardContent>
   </Card>
+)}
+
+{activePage === "AP магазин" && (
+  <div className="space-y-6">
+    <div className="bg-[#09152f] border border-slate-800 rounded-3xl p-8">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-4xl font-black text-white">
+            AP магазин
+          </h2>
+
+          <p className="text-slate-400 mt-2">
+            Управление товарами AP системы.
+          </p>
+        </div>
+
+        {canReviewAp && (
+<button
+  onClick={() => setShowAddItemForm((v) => !v)}
+  className="px-5 py-3 rounded-2xl bg-cyan-500/20 border border-cyan-400/30 text-cyan-300 hover:bg-cyan-500/30 transition"
+>
+  + Добавить товар
+</button>
+        )}
+      </div>
+
+{showAddItemForm && canReviewAp && (
+  <div className="mb-6 rounded-2xl bg-slate-900/70 border border-slate-700 p-5">
+    <h3 className="text-xl font-bold mb-4">
+      Новый товар
+    </h3>
+
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <input
+        value={newShopItemName}
+        onChange={(e) => setNewShopItemName(e.target.value)}
+        placeholder="Название товара"
+        className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+      />
+
+      <input
+        value={newShopItemPrice}
+        onChange={(e) => setNewShopItemPrice(e.target.value)}
+        type="number"
+        placeholder="Цена AP"
+        className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+      />
+
+      <button
+        onClick={addShopItem}
+        className="rounded-xl bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 hover:bg-emerald-500/30 px-4 py-2"
+      >
+        Сохранить товар
+      </button>
+    </div>
+
+    <textarea
+      value={newShopItemDescription}
+      onChange={(e) => setNewShopItemDescription(e.target.value)}
+      placeholder="Описание товара"
+      className="w-full mt-3 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+    />
+  </div>
+)}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+        {(shopItems || []).map((item) => (
+          <div
+            key={item.id}
+            className="bg-slate-900/70 border border-slate-700 rounded-2xl p-5"
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-bold text-white">
+                  {item.name}
+                </h3>
+                <div className="mt-2 inline-flex px-2 py-1 rounded-lg bg-cyan-500/10 border border-cyan-400/20 text-cyan-300 text-xs">
+                {getShopCategoryLabel(item.category)}
+                </div>
+
+                <p className="text-slate-400 text-sm mt-1">
+                  {item.description || "Без описания"}
+                </p>
+              </div>
+
+              <div className="text-cyan-300 font-bold text-lg">
+                {item.price} AP
+              </div>
+            </div>
+
+{editingShopItemId === item.id && (
+  <div className="mt-4 rounded-xl bg-slate-950/70 border border-slate-700 p-4 space-y-3">
+    <input
+      value={editShopItemName}
+      onChange={(e) => setEditShopItemName(e.target.value)}
+      placeholder="Название"
+      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+    />
+
+    <input
+      value={editShopItemPrice}
+      onChange={(e) => setEditShopItemPrice(e.target.value)}
+      type="number"
+      placeholder="Цена AP"
+      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+    />
+
+<select
+  value={editShopItemCategory}
+  onChange={(e) => setEditShopItemCategory(e.target.value)}
+  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+>
+  <option value="general">Разное</option>
+  <option value="rank">Ранги</option>
+  <option value="punishment">Наказания</option>
+  <option value="vacation">Отпуск</option>
+  <option value="priority">Приоритет</option>
+  <option value="cosmetic">Косметика</option>
+  <option value="bonus">Бонусы</option>
+  <option value="protection">Защита</option>
+  <option value="boost">Бусты</option>
+  <option value="weekly">Weekly Top</option>
+</select>
+
+    <textarea
+      value={editShopItemDescription}
+      onChange={(e) => setEditShopItemDescription(e.target.value)}
+      placeholder="Описание"
+      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+    />
+
+    <div className="flex gap-2">
+      <button
+        onClick={saveEditShopItem}
+        className="px-4 py-2 rounded-xl bg-emerald-500/20 border border-emerald-400/30 text-emerald-300"
+      >
+        Сохранить
+      </button>
+
+      <button
+        onClick={() => setEditingShopItemId(null)}
+        className="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-300"
+      >
+        Отмена
+      </button>
+    </div>
+  </div>
+)}
+
+            <div className="flex items-center justify-between mt-6">
+              <div className="text-xs text-slate-500">
+                ID: {item.id}
+              </div>
+
+              {canReviewAp && (
+                <div className="flex gap-2">
+<button
+  onClick={() => startEditShopItem(item)}
+  className="px-3 py-2 rounded-xl bg-amber-500/20 border border-amber-400/30 text-amber-300 text-sm"
+>
+  Edit
+</button>
+
+<button
+  onClick={() => disableShopItem(item.id)}
+  className="px-3 py-2 rounded-xl bg-rose-500/20 border border-rose-400/30 text-rose-300 text-sm"
+>
+  Disable
+</button>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
 )}
 
         </main>
