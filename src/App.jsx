@@ -74,6 +74,15 @@ const [extraStats, setExtraStats] = useState({
   vacationsActive: 0,
 });
 
+const [vacationsPage, setVacationsPage] = useState({
+  active: 0,
+  pending: 0,
+  approved: 0,
+  total: 0,
+});
+
+const [vacationsList, setVacationsList] = useState([]);
+
 const [voiceStats, setVoiceStats] = useState({
   totalHours: 0,
   todayHours: 0,
@@ -624,6 +633,49 @@ if (!hasAccess) {
     </div>
   );
 }
+
+useEffect(() => {
+  async function loadVacationsPage() {
+    const { data: vacationRows } = await supabase
+      .from("vacations")
+      .select(`
+        id,
+        user_tag,
+        status,
+        reason,
+        requested_at,
+        approved_at,
+        start_at,
+        end_at,
+        reviewer_tag
+      `)
+      .order("requested_at", { ascending: false })
+      .limit(20);
+
+    const active = (vacationRows || []).filter(
+      (v) => v.status === "ACTIVE"
+    ).length;
+
+    const pending = (vacationRows || []).filter(
+      (v) => v.status === "PENDING"
+    ).length;
+
+    const approved = (vacationRows || []).filter(
+      (v) => v.status === "APPROVED"
+    ).length;
+
+    setVacationsPage({
+      active,
+      pending,
+      approved,
+      total: (vacationRows || []).length,
+    });
+
+    setVacationsList(vacationRows || []);
+  }
+
+  loadVacationsPage();
+}, []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6">
@@ -1363,6 +1415,128 @@ if (!hasAccess) {
     </CardContent>
   </Card>
 )}
+
+{activePage === "Отпуска" && (
+  <Card className="bg-slate-900/80 border-slate-800 rounded-2xl shadow-xl">
+    <CardContent className="p-5">
+      <h2 className="text-2xl font-bold mb-2">Отпуска</h2>
+
+      <p className="text-slate-400 mb-6">
+        Управление отпусками участников семьи.
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-slate-800/70 border border-slate-700 rounded-2xl p-5">
+          <div className="text-sm text-slate-400">ACTIVE</div>
+          <div className="text-3xl font-bold text-cyan-300 mt-2">
+            {vacationsPage.active}
+          </div>
+        </div>
+
+        <div className="bg-slate-800/70 border border-slate-700 rounded-2xl p-5">
+          <div className="text-sm text-slate-400">PENDING</div>
+          <div className="text-3xl font-bold text-amber-300 mt-2">
+            {vacationsPage.pending}
+          </div>
+        </div>
+
+        <div className="bg-slate-800/70 border border-slate-700 rounded-2xl p-5">
+          <div className="text-sm text-slate-400">APPROVED</div>
+          <div className="text-3xl font-bold text-emerald-300 mt-2">
+            {vacationsPage.approved}
+          </div>
+        </div>
+
+        <div className="bg-slate-800/70 border border-slate-700 rounded-2xl p-5">
+          <div className="text-sm text-slate-400">Всего</div>
+          <div className="text-3xl font-bold text-rose-300 mt-2">
+            {vacationsPage.total}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <h3 className="text-xl font-bold mb-4">
+          Последние отпуска
+        </h3>
+
+        <div className="overflow-hidden rounded-xl border border-slate-800">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-800 text-slate-300">
+              <tr>
+                <th className="text-left p-3">Игрок</th>
+                <th className="text-left p-3">Статус</th>
+                <th className="text-left p-3">Причина</th>
+                <th className="text-left p-3">Начало</th>
+                <th className="text-left p-3">Конец</th>
+                <th className="text-left p-3">Одобрил</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {vacationsList.map((v) => (
+                <tr
+                  key={v.id}
+                  className="border-t border-slate-800"
+                >
+                  <td className="p-3 font-medium">
+                    {v.user_tag || "Unknown"}
+                  </td>
+
+                  <td className="p-3">
+                    <span
+                      className={`px-2 py-1 rounded-lg text-xs ${
+                        v.status === "ACTIVE"
+                          ? "bg-cyan-500/15 text-cyan-300 border border-cyan-400/20"
+                          : v.status === "PENDING"
+                          ? "bg-amber-500/15 text-amber-300 border border-amber-400/20"
+                          : "bg-emerald-500/15 text-emerald-300 border border-emerald-400/20"
+                      }`}
+                    >
+                      {v.status}
+                    </span>
+                  </td>
+
+                  <td className="p-3 text-slate-400">
+                    {v.reason || "Без причины"}
+                  </td>
+
+                  <td className="p-3 text-slate-400">
+                    {v.start_at
+                      ? new Date(v.start_at).toLocaleDateString()
+                      : "—"}
+                  </td>
+
+                  <td className="p-3 text-slate-400">
+                    {v.end_at
+                      ? new Date(v.end_at).toLocaleDateString()
+                      : "—"}
+                  </td>
+
+                  <td className="p-3 text-slate-400">
+                    {v.reviewer_tag || "—"}
+                  </td>
+                </tr>
+              ))}
+
+              {vacationsList.length === 0 && (
+                <tr>
+                  <td
+                    colSpan="6"
+                    className="p-6 text-center text-slate-400"
+                  >
+                    Отпусков пока нет.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </CardContent>
+  </Card>
+)}
+
         </main>
       </div>
     </div>
