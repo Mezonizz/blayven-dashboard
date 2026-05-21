@@ -21,6 +21,13 @@ const ALLOWED_DASHBOARD_ROLES = [
   "1400390287041499288", // Deputy 
 ];
 
+const CC_ROLE_ID = "1400390306427441165";
+
+const REVIEW_AP_ROLES = [
+  "1400390286164758599", // Leader
+  "1400390287041499288", // Deputy
+];
+
 const Card = ({ children, className = "" }) => (
   <div className={className}>{children}</div>
 );
@@ -60,8 +67,18 @@ const [profiles, setProfiles] = useState([]);
 const [session, setSession] = useState(null);
 const [discordUser, setDiscordUser] = useState(null);
 const [authLoading, setAuthLoading] = useState(true);
+const [apRequests, setApRequests] = useState([]);
+const [processingApRequestId, setProcessingApRequestId] = useState(null);
 const [hasAccess, setHasAccess] = useState(false);
 const [requestsLive, setRequestsLive] = useState([]);
+const [discordRoles, setDiscordRoles] = useState([]);
+const [apRequestTargetId, setApRequestTargetId] = useState("");
+const [apRequestAmount, setApRequestAmount] = useState("");
+const [apRequestReason, setApRequestReason] = useState("");
+const canRequestAp = discordRoles.includes(CC_ROLE_ID);
+const canReviewAp = discordRoles.some((roleId) =>
+  REVIEW_AP_ROLES.includes(roleId)
+);
 const [statsLive, setStatsLive] = useState({
   members: 0,
   totalAp: 0,
@@ -110,6 +127,9 @@ const [searchQuery, setSearchQuery] = useState("");
 const [profileStatusFilter, setProfileStatusFilter] = useState("ALL");
 
 const [currentPage, setCurrentPage] = useState(1);
+
+const [membersPage, setMembersPage] = useState(1);
+const membersPerPage = 15;
 const [sortBy, setSortBy] = useState("ap");
 const [sortDirection, setSortDirection] = useState("desc");
 const [selectedProfile, setSelectedProfile] = useState(null);
@@ -124,12 +144,13 @@ const profilesPerPage = 15;
 
 useEffect(() => {
   setCurrentPage(1);
+  setMembersPage(1);
 }, [searchQuery, profileStatusFilter]);
 
 const [activePage, setActivePage] = useState("Главная");
 
 const stats = [
-  { title: "Участников", value: statsLive.members, icon: Users, note: "в базе members" },
+  { title: "Участники", value: statsLive.members, icon: Users, note: "активные в Discord" },
   { title: "AP выдано", value: statsLive.totalAp, icon: Coins, note: "total earned" },
   { title: "Voice часов", value: `${statsLive.voiceHours}ч`, icon: Mic, note: "всего" },
   { title: "Активных наказаний", value: statsLive.activePunishments, icon: ShieldAlert, note: "status ACTIVE" },
@@ -145,8 +166,9 @@ const filteredProfiles = profiles.filter((m) => {
     String(m.static_id || "").toLowerCase().includes(q);
 
   const matchesStatus =
-    profileStatusFilter === "ALL" ||
-    m.status === profileStatusFilter;
+  profileStatusFilter === "ALL" ||
+  (profileStatusFilter === "Покинул Discord" && !m.in_discord) ||
+  m.status === profileStatusFilter;
 
   return matchesSearch && matchesStatus;
 });
@@ -176,11 +198,30 @@ const paginatedProfiles = filteredProfiles.slice(
   currentPage * profilesPerPage
 );
 
+const activeMembersCount = profiles.filter((m) => m.in_discord).length;
+const leftMembersCount = profiles.length - activeMembersCount;
+
+const membersTotalPages = Math.ceil(filteredProfiles.length / membersPerPage);
+
+const paginatedMembersProfiles = filteredProfiles.slice(
+  (membersPage - 1) * membersPerPage,
+  membersPage * membersPerPage
+);
+
 useEffect(() => {
   async function loadStats() {
-    const { count: membersCount } = await supabase
-      .from("members")
-      .select("*", { count: "exact", head: true });
+  const { count: membersCount } = await supabase
+  .from("members")
+  .select("*", { count: "exact", head: true })
+  .eq("in_discord", true);
+
+    const { data: apRequestsRows } = await supabase
+  .from("loyalty_ap_requests")
+  .select("*")
+  .order("created_at", { ascending: false })
+  .limit(20);
+
+setApRequests(apRequestsRows || []);
 
 const { data: apRows } = await supabase
   .from("loyalty_profiles")
@@ -230,6 +271,15 @@ setApStats({
   totalSpent,
   pendingRequests: pendingApRequests || 0,
 });
+
+const { data: apRequestsRows2 } = await supabase
+  .from("loyalty_ap_requests")
+  .select("*")
+  .order("created_at", { ascending: false })
+  .limit(20);
+
+setApRequests(apRequestsRows2 || []);
+
     const totalVoiceSeconds = (voiceRows || []).reduce(
       (sum, r) => sum + Number(r.duration_seconds || 0),
       0
@@ -287,7 +337,7 @@ useEffect(() => {
   async function loadDashboard() {
     const { data: membersData, error: membersError } = await supabase
       .from("members")
-      .select("id, username, display_name, rank, static_id")
+      .select("id, username, display_name, rank, static_id, in_discord, discord_note, left_at")
       .order("rank", { ascending: false });
 
     if (membersError) {
@@ -349,7 +399,15 @@ const { data: apRequestsData } = await supabase
         ap: profile?.points || 0,
         total_earned: profile?.total_earned || 0,
         total_spent: profile?.total_spent || 0,
-        status: profile ? "Активен" : "Нет AP профиля",
+in_discord: m.in_discord,
+discord_note: m.discord_note,
+left_at: m.left_at,
+
+status: !m.in_discord
+  ? "Покинул Discord"
+  : profile
+  ? "Активен"
+  : "Нет AP профиля",
       };
     });
 
@@ -512,6 +570,41 @@ useEffect(() => {
 }, []);
 
 useEffect(() => {
+  const channel = supabase
+    .channel("ap-requests-live")
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "loyalty_ap_requests",
+      },
+      async () => {
+        const { data } = await supabase
+          .from("loyalty_ap_requests")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(20);
+
+        setApRequests(data || []);
+
+        const pending =
+          (data || []).filter((r) => r.status === "PENDING").length;
+
+        setApStats((prev) => ({
+          ...prev,
+          pendingRequests: pending,
+        }));
+      }
+    )
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, []);
+
+useEffect(() => {
   async function loadVacationsPage() {
     const { data: vacationRows } = await supabase
       .from("vacations")
@@ -613,6 +706,8 @@ useEffect(() => {
 
     const memberData = await memberRes.json();
 
+    setDiscordRoles(memberData.roles || []);
+
     const allowed = (memberData.roles || []).some((roleId) =>
       ALLOWED_DASHBOARD_ROLES.includes(roleId)
     );
@@ -676,6 +771,135 @@ if (!hasAccess) {
       </div>
     </div>
   );
+}
+
+async function createApRequestFromDashboard() {
+  if (!canRequestAp) return;
+
+  if (!apRequestTargetId || !apRequestAmount || !apRequestReason.trim()) {
+    alert("Заполни получателя, количество AP и причину.");
+    return;
+  }
+
+  const target = profiles.find(
+    (p) => String(p.id) === String(apRequestTargetId)
+  );
+
+  if (!target) {
+    alert("Пользователь не найден.");
+    return;
+  }
+
+  const amount = Number(apRequestAmount);
+
+  if (amount <= 0) {
+    alert("Количество AP должно быть больше 0.");
+    return;
+  }
+
+  if (amount > 500) {
+    alert("Максимум за один запрос: 500 AP.");
+    return;
+  }
+
+  const { error } = await supabase.from("loyalty_ap_requests").insert({
+    guild_id: ALLOWED_GUILD_ID,
+    requester_id: discordUser.id,
+    requester_tag: discordUser.global_name || discordUser.username,
+    target_id: target.id,
+    target_tag: target.username,
+    amount,
+    reason: apRequestReason.trim(),
+    status: "PENDING",
+  });
+
+  if (error) {
+    console.error("create AP request error:", error);
+    alert("Ошибка при создании AP-запроса.");
+    return;
+  }
+
+  setApRequestTargetId("");
+  setApRequestAmount("");
+  setApRequestReason("");
+
+  alert("AP-запрос создан. Leader/Deputy смогут его рассмотреть.");
+}
+
+async function approveApRequest(requestId) {
+  if (!canReviewAp) return;
+
+  const request = apRequests.find((r) => r.id === requestId);
+  if (!request) return;
+
+  if (request.status !== "PENDING") {
+    alert("Эта заявка уже обработана.");
+    return;
+  }
+
+  setProcessingApRequestId(requestId);
+
+  const { error } = await supabase
+    .from("loyalty_ap_requests")
+    .update({
+      status: "APPROVED",
+      reviewer_tag: discordUser.global_name || discordUser.username,
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq("id", requestId);
+
+  if (error) {
+    console.error("approve AP request error:", error);
+    alert("Ошибка approve.");
+    setProcessingApRequestId(null);
+    return;
+  }
+
+  setApStats((prev) => ({
+    ...prev,
+    totalBalance: prev.totalBalance + Number(request.amount || 0),
+    totalEarned: prev.totalEarned + Number(request.amount || 0),
+    pendingRequests: Math.max(0, prev.pendingRequests - 1),
+  }));
+
+  setProcessingApRequestId(null);
+}
+
+async function rejectApRequest(requestId) {
+  if (!canReviewAp) return;
+
+  const request = apRequests.find((r) => r.id === requestId);
+  if (!request) return;
+
+  if (request.status !== "PENDING") {
+    alert("Эта заявка уже обработана.");
+    return;
+  }
+
+  setProcessingApRequestId(requestId);
+
+  const { error } = await supabase
+    .from("loyalty_ap_requests")
+    .update({
+      status: "REJECTED",
+      reviewer_tag: discordUser.global_name || discordUser.username,
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq("id", requestId);
+
+  if (error) {
+    console.error("reject AP request error:", error);
+    alert("Ошибка reject.");
+    setProcessingApRequestId(null);
+    return;
+  }
+
+  setApStats((prev) => ({
+    ...prev,
+    pendingRequests: Math.max(0, prev.pendingRequests - 1),
+  }));
+
+  setProcessingApRequestId(null);
 }
 
   return (
@@ -801,6 +1025,7 @@ if (!hasAccess) {
         <option value="ALL">Все профили</option>
         <option value="Активен">Есть AP профиль</option>
         <option value="Нет AP профиля">Нет AP профиля</option>
+        <option value="Покинул Discord">Покинул Discord</option>
       </select>
     </div>
   </div>
@@ -945,26 +1170,47 @@ if (!hasAccess) {
           </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-3 text-center">
-          <div className="bg-slate-800/70 border border-slate-700 rounded-xl px-4 py-3">
-            <div className="text-2xl font-bold">{profiles.length}</div>
-            <div className="text-xs text-slate-400">Всего</div>
-          </div>
+<div className="grid grid-cols-4 gap-3 text-center">
+  <div className="bg-slate-800/70 border border-slate-700 rounded-xl px-4 py-3">
+    <div className="text-2xl font-bold">
+      {activeMembersCount}
+    </div>
 
-          <div className="bg-slate-800/70 border border-slate-700 rounded-xl px-4 py-3">
-            <div className="text-2xl font-bold">
-              {profiles.filter((m) => m.status === "Активен").length}
-            </div>
-            <div className="text-xs text-slate-400">С AP</div>
-          </div>
+    <div className="text-xs text-slate-400">
+      В Discord
+    </div>
+  </div>
 
-          <div className="bg-slate-800/70 border border-slate-700 rounded-xl px-4 py-3">
-            <div className="text-2xl font-bold">
-              {profiles.filter((m) => m.status === "Нет AP профиля").length}
-            </div>
-            <div className="text-xs text-slate-400">Без AP</div>
-          </div>
-        </div>
+  <div className="bg-slate-800/70 border border-slate-700 rounded-xl px-4 py-3">
+    <div className="text-2xl font-bold">
+      {profiles.filter((m) => m.status === "Активен").length}
+    </div>
+
+    <div className="text-xs text-slate-400">
+      С AP
+    </div>
+  </div>
+
+  <div className="bg-slate-800/70 border border-slate-700 rounded-xl px-4 py-3">
+    <div className="text-2xl font-bold">
+      {profiles.filter((m) => m.status === "Нет AP профиля").length}
+    </div>
+
+    <div className="text-xs text-slate-400">
+      Без AP
+    </div>
+  </div>
+
+  <div className="bg-slate-800/70 border border-slate-700 rounded-xl px-4 py-3">
+    <div className="text-2xl font-bold text-rose-300">
+      {leftMembersCount}
+    </div>
+
+    <div className="text-xs text-slate-400">
+      Не в Discord
+    </div>
+  </div>
+</div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
@@ -986,6 +1232,7 @@ if (!hasAccess) {
           <option value="ALL">Все профили</option>
           <option value="Активен">Есть AP профиль</option>
           <option value="Нет AP профиля">Нет AP профиля</option>
+          <option value="Покинул Discord">Покинул Discord</option>
         </select>
       </div>
 {selectedProfile && (
@@ -1159,7 +1406,35 @@ if (!hasAccess) {
           </tbody>
         </table>
       </div>
+            <div className="flex items-center justify-between mt-5">
+  <div className="text-sm text-slate-400">
+    Страница {currentPage} из {totalPages || 1}
+  </div>
 
+  <div className="flex gap-2">
+    <button
+      onClick={() =>
+        setCurrentPage((p) => Math.max(1, p - 1))
+      }
+      disabled={currentPage === 1}
+      className="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 disabled:opacity-40"
+    >
+      Назад
+    </button>
+
+    <button
+      onClick={() =>
+        setCurrentPage((p) =>
+          Math.min(totalPages, p + 1)
+        )
+      }
+      disabled={currentPage >= totalPages}
+      className="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 disabled:opacity-40"
+    >
+      Далее
+    </button>
+  </div>
+</div>
     </CardContent>
   </Card>
 )}
@@ -1200,9 +1475,146 @@ if (!hasAccess) {
     </div>
   </div>
 
+{canRequestAp && (
+  <div className="mt-6 rounded-2xl bg-slate-800/70 border border-slate-700 p-5">
+    <h3 className="text-xl font-bold mb-4">Создать AP-запрос</h3>
+
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <select
+        value={apRequestTargetId}
+        onChange={(e) => setApRequestTargetId(e.target.value)}
+        className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+      >
+        <option value="">Выбери участника</option>
+
+        {profiles
+          .filter((p) => p.in_discord)
+          .map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} #{p.static_id}
+            </option>
+          ))}
+      </select>
+
+      <input
+        value={apRequestAmount}
+        onChange={(e) => setApRequestAmount(e.target.value)}
+        type="number"
+        placeholder="Количество AP"
+        className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+      />
+
+      <button
+        onClick={createApRequestFromDashboard}
+        className="rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 hover:bg-cyan-500/30 px-4 py-2"
+      >
+        Отправить запрос
+      </button>
+    </div>
+
+    <textarea
+      value={apRequestReason}
+      onChange={(e) => setApRequestReason(e.target.value)}
+      placeholder="Причина выдачи AP"
+      className="w-full mt-3 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 outline-none"
+    />
+  </div>
+)}
+
 </div>
 <div className="mt-6">
   <h3 className="text-xl font-bold mb-4">Заявки на выдачу AP</h3>
+
+<div className="overflow-hidden rounded-xl border border-slate-800">
+  <table className="w-full text-sm">
+    <thead className="bg-slate-800 text-slate-300">
+      <tr>
+        <th className="text-left p-3">Получатель</th>
+        <th className="text-left p-3">AP</th>
+        <th className="text-left p-3">Причина</th>
+        <th className="text-left p-3">Запросил</th>
+        <th className="text-left p-3">Статус</th>
+        <th className="text-left p-3">Действия</th>
+      </tr>
+    </thead>
+
+    <tbody>
+      {apRequests.map((r) => (
+        <tr
+          key={r.id}
+          className="border-t border-slate-800"
+        >
+          <td className="p-3 font-medium">
+            {r.target_tag || "Unknown"}
+          </td>
+
+          <td className="p-3 text-cyan-300 font-bold">
+            {r.amount} AP
+          </td>
+
+          <td className="p-3 text-slate-400">
+            {r.reason}
+          </td>
+
+          <td className="p-3 text-slate-400">
+            {r.requester_tag}
+          </td>
+
+          <td className="p-3">
+            <span
+              className={`px-2 py-1 rounded-lg text-xs ${
+                r.status === "APPROVED"
+                  ? "bg-emerald-500/15 text-emerald-300 border border-emerald-400/20"
+                  : r.status === "REJECTED"
+                  ? "bg-rose-500/15 text-rose-300 border border-rose-400/20"
+                  : "bg-amber-500/15 text-amber-300 border border-amber-400/20"
+              }`}
+            >
+              {r.status}
+            </span>
+          </td>
+
+          <td className="p-3">
+            {canReviewAp && r.status === "PENDING" ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => approveApRequest(r.id)}
+                  disabled={processingApRequestId === r.id}
+                  className="px-3 py-1 rounded-lg bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 disabled:opacity-40"
+                >
+                  Approve
+                </button>
+
+                <button
+                  onClick={() => rejectApRequest(r.id)}
+                  disabled={processingApRequestId === r.id}
+                  className="px-3 py-1 rounded-lg bg-rose-500/20 border border-rose-400/30 text-rose-300 disabled:opacity-40"
+                >
+                  Reject
+                </button>
+              </div>
+            ) : (
+              <span className="text-slate-500 text-xs">
+                {r.reviewer_tag || "—"}
+              </span>
+            )}
+          </td>
+        </tr>
+      ))}
+
+      {apRequests.length === 0 && (
+        <tr>
+          <td
+            colSpan="6"
+            className="p-6 text-center text-slate-400"
+          >
+            AP-заявок пока нет.
+          </td>
+        </tr>
+      )}
+    </tbody>
+  </table>
+</div>
 
   <div className="space-y-3">
     {apPendingRequests.map((r) => (
