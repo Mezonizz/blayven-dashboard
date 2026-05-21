@@ -511,6 +511,50 @@ useEffect(() => {
   loadPunishmentsPage();
 }, []);
 
+useEffect(() => {
+  async function loadVacationsPage() {
+    const { data: vacationRows } = await supabase
+      .from("vacations")
+      .select(`
+        id,
+        user_tag,
+        status,
+        reason,
+        requested_at,
+        approved_at,
+        start_at,
+        end_at,
+        reviewer_tag
+      `)
+      .order("requested_at", { ascending: false })
+      .limit(20);
+
+    const active = (vacationRows || []).filter(
+      (v) => v.status === "ACTIVE"
+    ).length;
+
+    const pending = (vacationRows || []).filter(
+      (v) => v.status === "PENDING"
+    ).length;
+
+    const approved = (vacationRows || []).filter(
+      (v) => v.status === "APPROVED"
+    ).length;
+
+    setVacationsPage({
+      active,
+      pending,
+      approved,
+      total: (vacationRows || []).length,
+    });
+
+    setVacationsList(vacationRows || []);
+  }
+
+  loadVacationsPage();
+}, []);
+
+
 async function loginWithDiscord() {
   await supabase.auth.signInWithOAuth({
     provider: "discord",
@@ -633,49 +677,6 @@ if (!hasAccess) {
     </div>
   );
 }
-
-useEffect(() => {
-  async function loadVacationsPage() {
-    const { data: vacationRows } = await supabase
-      .from("vacations")
-      .select(`
-        id,
-        user_tag,
-        status,
-        reason,
-        requested_at,
-        approved_at,
-        start_at,
-        end_at,
-        reviewer_tag
-      `)
-      .order("requested_at", { ascending: false })
-      .limit(20);
-
-    const active = (vacationRows || []).filter(
-      (v) => v.status === "ACTIVE"
-    ).length;
-
-    const pending = (vacationRows || []).filter(
-      (v) => v.status === "PENDING"
-    ).length;
-
-    const approved = (vacationRows || []).filter(
-      (v) => v.status === "APPROVED"
-    ).length;
-
-    setVacationsPage({
-      active,
-      pending,
-      approved,
-      total: (vacationRows || []).length,
-    });
-
-    setVacationsList(vacationRows || []);
-  }
-
-  loadVacationsPage();
-}, []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6">
